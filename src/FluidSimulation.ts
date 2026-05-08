@@ -60,9 +60,15 @@ export class FluidSimulation {
   }
 
   private _setupRenderer(canvas: HTMLCanvasElement): void {
-    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      premultipliedAlpha: false,
+    });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.setClearColor(0x000000, 0); // transparent background
+    // autoClear stays TRUE (default) so screen is wiped each frame
     this.dpr = this.renderer.getPixelRatio();
     this.width = innerWidth * this.dpr;
     this.height = innerHeight * this.dpr;
@@ -112,9 +118,17 @@ export class FluidSimulation {
   private _setupMaterials(): void {
     const make = (
       [vert, frag]: [string, string],
-      uniforms: Record<string, THREE.IUniform>
+      uniforms: Record<string, THREE.IUniform>,
+      transparent = false
     ) =>
-      new THREE.ShaderMaterial({ vertexShader: vert, fragmentShader: frag, uniforms });
+      new THREE.ShaderMaterial({
+        vertexShader: vert,
+        fragmentShader: frag,
+        uniforms,
+        transparent,
+        depthTest: false,
+        depthWrite: false,
+      });
 
     const tex = (): THREE.IUniform => ({ value: null });
     const num = (v = 0): THREE.IUniform => ({ value: v });
@@ -139,7 +153,10 @@ export class FluidSimulation {
         uVelocity: tex(),
         texelSize: vec2(),
       }),
-      curl: make(shaders.curl, { uVelocity: tex(), texelSize: vec2() }),
+      curl: make(shaders.curl, {
+        uVelocity: tex(),
+        texelSize: vec2(),
+      }),
       vorticity: make(shaders.vorticity, {
         uVelocity: tex(),
         uCurl: tex(),
@@ -157,13 +174,22 @@ export class FluidSimulation {
         uVelocity: tex(),
         texelSize: vec2(),
       }),
-      clear: make(shaders.clear, { uTexture: tex(), value: num() }),
-      display: make(shaders.display, {
+      clear: make(shaders.clear, {
         uTexture: tex(),
-        threshold: num(),
-        edgeSoftness: num(),
-        inkColor: { value: new THREE.Color() },
+        value: num(),
       }),
+      // transparent: true is critical — this is the only pass that
+      // renders to the screen and must not fill pixels it doesn't touch
+      display: make(
+        shaders.display,
+        {
+          uTexture: tex(),
+          threshold: num(),
+          edgeSoftness: num(),
+          inkColor: { value: new THREE.Color() },
+        },
+        true // <-- transparent
+      ),
     };
   }
 
@@ -191,25 +217,38 @@ export class FluidSimulation {
     );
   }
 
-  private _pass(
+  // All simulation passes render to offscreen targets — no clear needed
+  private _passOffscreen(
     material: THREE.ShaderMaterial,
-    target: THREE.WebGLRenderTarget | null
+    target: THREE.WebGLRenderTarget
   ): void {
     this.quad.material = material;
     this.renderer.setRenderTarget(target);
     this.renderer.render(this.scene, this.camera);
   }
 
+  // Final display pass renders to screen — renderer.autoClear handles the wipe
+  private _passScreen(material: THREE.ShaderMaterial): void {
+    this.quad.material = material;
+    this.renderer.setRenderTarget(null);
+    this.renderer.render(this.scene, this.camera);
+  }
+
   private _loop(): void {
     const dt = 0.016;
-    const { curl: curlStrength } = this.config; // Removed 'iterations' from destructuring
+    const { curl: curlStrength } = this.config;
 
     if (this.mouse.moved) {
       this.mouse.moved = false;
       const { x, y, velocityX, velocityY } = this.mouse;
       const color = new THREE.Vector3(velocityX, velocityY, 0);
       this._splat(x, y, color, this.velocity);
-      this._splat(x, y, new THREE.Vector3(Math.abs(velocityX), Math.abs(velocityY), 0.5), this.dye); // Derived dye color from velocity
+      this._splat(
+        x,
+        y,
+        new THREE.Vector3(Math.abs(velocityX), Math.abs(velocityY), 0.5),
+        this.dye
+      );
     }
 
     this._advect(this.velocity, this.velocity, this.config.velocityDissipation, dt);
@@ -220,8 +259,8 @@ export class FluidSimulation {
 
     this._passDivergence(this.velocity.read.texture);
 
-    this._passClear(this.pressure, this.config.pressureDecay); // Pass the whole DoubleTarget
-    for (let i = 0; i < this.config.pressureIterations; i++) { // Used pressureIterations
+    this._passClear(this.pressure, this.config.pressureDecay);
+    for (let i = 0; i < this.config.pressureIterations; i++) {
       this._passPressure(this.pressure, this.divergence.texture);
     }
 
@@ -243,8 +282,8 @@ export class FluidSimulation {
     m.uniforms.aspectRatio.value = this.width / this.height;
     m.uniforms.point.value.set(x / this.width, 1 - y / this.height);
     m.uniforms.color.value.copy(color);
-    m.uniforms.radius.value = this.config.splatRadius / 1000;
-    this._pass(m, target.write);
+    m.uniforms.radius.value = this.config.splatRadius;
+    this._passOffscreen(m, target.write);
     target.swap();
   }
 
@@ -260,7 +299,7 @@ export class FluidSimulation {
     m.uniforms.texelSize.value.set(1 / this.simSize.w, 1 / this.simSize.h);
     m.uniforms.dt.value = dt;
     m.uniforms.dissipation.value = dissipation;
-    this._pass(m, source.write);
+    this._passOffscreen(m, source.write);
     source.swap();
   }
 
@@ -268,7 +307,7 @@ export class FluidSimulation {
     const m = this.material.curl;
     m.uniforms.uVelocity.value = velocity;
     m.uniforms.texelSize.value.set(1 / this.simSize.w, 1 / this.simSize.h);
-    this._pass(m, this.curl);
+    this._passOffscreen(m, this.curl);
   }
 
   private _passVorticity(
@@ -283,7 +322,7 @@ export class FluidSimulation {
     m.uniforms.curlStrength.value = curlStrength;
     m.uniforms.dt.value = dt;
     m.uniforms.texelSize.value.set(1 / this.simSize.w, 1 / this.simSize.h);
-    this._pass(m, velocity.write);
+    this._passOffscreen(m, velocity.write);
     velocity.swap();
   }
 
@@ -291,14 +330,14 @@ export class FluidSimulation {
     const m = this.material.divergence;
     m.uniforms.uVelocity.value = velocity;
     m.uniforms.texelSize.value.set(1 / this.simSize.w, 1 / this.simSize.h);
-    this._pass(m, this.divergence);
+    this._passOffscreen(m, this.divergence);
   }
 
   private _passClear(target: DoubleTarget, value: number): void {
     const m = this.material.clear;
     m.uniforms.uTexture.value = target.read.texture;
     m.uniforms.value.value = value;
-    this._pass(m, target.write);
+    this._passOffscreen(m, target.write);
     target.swap();
   }
 
@@ -310,7 +349,7 @@ export class FluidSimulation {
     m.uniforms.uPressure.value = pressure.read.texture;
     m.uniforms.uDivergence.value = divergence;
     m.uniforms.texelSize.value.set(1 / this.simSize.w, 1 / this.simSize.h);
-    this._pass(m, pressure.write);
+    this._passOffscreen(m, pressure.write);
     pressure.swap();
   }
 
@@ -322,7 +361,7 @@ export class FluidSimulation {
     m.uniforms.uPressure.value = pressure;
     m.uniforms.uVelocity.value = velocity.read.texture;
     m.uniforms.texelSize.value.set(1 / this.simSize.w, 1 / this.simSize.h);
-    this._pass(m, velocity.write);
+    this._passOffscreen(m, velocity.write);
     velocity.swap();
   }
 
@@ -332,6 +371,6 @@ export class FluidSimulation {
     m.uniforms.threshold.value = this.config.threshold;
     m.uniforms.edgeSoftness.value = this.config.edgeSoftness;
     m.uniforms.inkColor.value.copy(this.config.inkColor);
-    this._pass(m, null);
+    this._passScreen(m); // renders to screen with autoClear wiping first
   }
 }
