@@ -12,6 +12,7 @@ h1 {
   font-weight: 900;
   font-size: clamp(3rem, 10vw, 15rem);
   line-height: 0.9;
+  color: black;
   letter-spacing: -0.04em;
 }
 
@@ -52,6 +53,7 @@ nav {
   flex-direction: column;
   justify-content: center;
   overflow: hidden;
+  textcolor: #1a1a1a;
 }
 
 .hero .header {
