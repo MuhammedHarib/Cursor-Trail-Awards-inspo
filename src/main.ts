@@ -22,3 +22,32 @@ new FluidSimulation(canvas, {
   edgeSoftness: 0.3,        // soft edges on the trail
   inkColor: new THREE.Color(1, 1, 1),
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// new FluidSimulation(canvas, {
+//   simResolution: 128,        // Kept at your working value
+//   dyeResolution: 512,        // Kept at your working value
+//   curl: 10,                  // FIXED: Lowered from 30 to 10 to stop the "shaking"
+//   pressureIterations: 30,    // FIXED: Increased from 10 to 30 to smooth the flow
+//   splatRadius: 0.001,         // FIXED: Large enough to definitely see
+//   forceStrength: 6.0,        // FIXED: Enough "punch" to move the ink
+//   velocityDissipation: 0.95, // Standard smooth fade
+//   dyeDissipation: 0.92,      // Standard ink fade
+//   pressureDecay: 0.75,
+//   threshold: 0.001,          // Lowered to ensure every tiny move shows up
+//   edgeSoftness: 0.0,         // Crisp ink look
+//   inkColor: new THREE.Color(1, 1, 1), 
+// });
